@@ -1,37 +1,29 @@
 # simple chainlit test
 # how to run: chainlit run app.py -w
 # app.py - принимает события UI, /local_agent_chat - реализует приложение
-from uuid import uuid4
-
 import chainlit as cl
 
-from local_agent_chat.agent import create_agent
-from local_agent_chat.memory import create_checkpointer
+from local_agent_chat.bootstrap import create_application
+from local_agent_chat.runtime import ChatBinding
 
-
-checkpointer = create_checkpointer()
+application = create_application()
 
 
 @cl.on_chat_start
-async def on_chat_start():
-    # состояние текущей пользовательской чат-сессии
-    thread_id = str(uuid4())
+async def on_chat_start() -> None:
+    chat_id = cl.context.session.thread_id
 
-    agent = create_agent(checkpointer=checkpointer)
+    binding = ChatBinding(chat_id=chat_id, agent_id="general", memory_thread_id=chat_id)
+    cl.user_session.set("chat_binding", binding)
 
-    cl.user_session.set("agent", agent)
-    cl.user_session.set("thread_id", thread_id)
-
-    await cl.Message(
-        content="Чат запущен!",
-    ).send()
+    await cl.Message(content="Чат запущен!").send()
 
 
 @cl.on_message
-async def on_message(message: cl.Message):
-    agent = cl.user_session.get("agent")
-    thread_id = cl.user_session.get("thread_id")
+async def on_message(message: cl.Message) -> None:
+    binding = cl.user_session.get("chat_binding")
+    if binding is None:
+        raise RuntimeError("Chat binding is not initialized.")
 
-    response = await agent.ainvoke(message.content, thread_id=thread_id)
-
+    response = await application.runtime.run(binding=binding, text=message.content)
     await cl.Message(content=response).send()
