@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -10,6 +10,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 
 AgentBuilder = Callable[..., Any]
 ModelFactory = Callable[[], BaseChatModel]
+CheckpointerProvider = Callable[[], Awaitable[BaseCheckpointSaver]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,8 +23,8 @@ class AgentDefinition:
 class AgentRegistry:
     """Registry and lifecycle owner for colmpiled agent graphs."""
 
-    def __init__(self, *, checkpoiter: BaseCheckpointSaver) -> None:
-        self._checkpointer = checkpoiter
+    def __init__(self, *, checkpointer_provider: CheckpointerProvider) -> None:
+        self._checkpointer_provider = checkpointer_provider
         self._definitions: dict[str, AgentDefinition] = {}
         self._graphs: dict[str, Any] = {}
         self._build_lock = asyncio.Lock()
@@ -47,13 +48,20 @@ class AgentRegistry:
             if definition is None:
                 raise KeyError(f"Unknown agent: {agent_id}")
 
+            checkpointer = await self._checkpointer_provider()
             model = definition.model_factory()
+
             graph = definition.build(
                 model=model,
-                checkpointer=self._checkpointer
+                checkpointer=checkpointer
             )
+
             self._graphs[agent_id] = graph
             return graph
 
     def available(self) -> tuple[str, ...]:
         return tuple(self._definitions)
+
+    def clear(self) -> None:
+        """Drop compiled graphs before their shared checkpointer is closed."""
+        self._graphs.clear()
