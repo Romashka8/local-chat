@@ -43,6 +43,14 @@ class SQLiteAgentMemory:
             self._saver = saver
             return saver
 
+    async def delete_thread(self, thread_id: str) -> None:
+        """Delete every checkpoint associated with one LangGraph thread."""
+        # setup() is intentionally explict: adelete_thread() in the current
+        # SQLite saver does not initialize a fresh database on its own.
+        saver = await self.checkpointer()
+        await saver.setup()
+        await saver.delete_thread(thread_id)
+
     async def close(self) -> None:
         """Close the owned SQLite connection during application shutdown."""
         async with self._lock:
