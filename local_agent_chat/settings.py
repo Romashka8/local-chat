@@ -9,6 +9,7 @@ from pathlib import Path
 class Settings:
     data_dir: Path
     checkpoints_db: Path
+    chainlit_db: Path
 
 
 def load_settings() -> Settings:
@@ -23,5 +24,6 @@ def load_settings() -> Settings:
 
     return Settings(
         data_dir=data_dir,
-        checkpoints_db=data_dir / "checkpoints.sqlite3"
+        checkpoints_db=data_dir / "checkpoints.sqlite3",
+        chainlit_db=data_dir / "chainlit.sqlite3"
     )
