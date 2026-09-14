@@ -17,10 +17,18 @@ class Application:
     registry: AgentRegistry
     runtime: AgentRuntime
 
+    async def delete_chat(self, chat_id: str) -> None:
+        """Delete application state owned by one chat.
+        
+        Today chat_id == LangGraph memory_thread_id. Keeping this operation on
+        Application gives us one place to expand cleanup when sandboxes, runtime
+        history, attachments, etc. are added later.
+        """
+        await self.memory.delete_thread(chat_id)
+
     async def close(self) -> None:
         self.registry.clear()
         await self.memory.close()
-
 
 def create_application() -> Application:
     settings = load_settings()
