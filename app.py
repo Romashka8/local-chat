@@ -1,10 +1,3 @@
-# simple chainlit test
-# how to run: chainlit run app.py -w
-# app.py - принимает события UI, /local_agent_chat - реализует приложение
-
-# NOTE: FOR AUTH:
-# ValueError: You must provide a JWT secret in the environment to use authentication.
-# Run `chainlit create-secret` to generate one.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
@@ -31,8 +24,8 @@ def data_layer():
 
 @cl.header_auth_callback
 async def local_user(_headers):
-    """Single-user local-development authenfication.
-    
+    """Single-user local-development authentication.
+
     This deliberately trusts every request that reaches the Chainlit process.
     Keep the development server bound to localhost. Replace this callback with
     real proxy/OAuth/password authentication before exposing the app remotely.
@@ -41,27 +34,36 @@ async def local_user(_headers):
         identifier="local-user",
         metadata={
             "role": "local",
-            "provider": "local-header"
-        }
+            "provider": "local-header",
+        },
     )
 
 
+def _current_user_id() -> str:
+    user = cl.user_session.get("user")
+    identifier = getattr(user, "identifier", None)
+    if not identifier:
+        raise RuntimeError("Authenticated Chainlit user is not available")
+    return str(identifier)
+
+
 def _binding(
-        *,
-        chat_id: str,
-        agent_id: str = "general",
-        memory_thread_id: str | None = None
+    *,
+    chat_id: str,
+    agent_id: str = "general",
+    memory_thread_id: str | None = None,
 ) -> ChatBinding:
     return ChatBinding(
+        user_id=_current_user_id(),
         chat_id=chat_id,
         agent_id=agent_id,
-        memory_thread_id=memory_thread_id or chat_id
+        memory_thread_id=memory_thread_id or chat_id,
     )
 
 
 def _store_binding(binding: ChatBinding) -> None:
-    # Keep only JSON-serializable values in Chainlit's user session. When
-    # persistence is enabled Chainlit can restore these values on resume.
+    # Keep only JSON-serializable values in Chainlit's user session. The
+    # authenticated user is already restored by Chainlit itself.
     cl.user_session.set("agent_id", binding.agent_id)
     cl.user_session.set("memory_thread_id", binding.memory_thread_id)
 
@@ -76,18 +78,20 @@ def _current_binding() -> ChatBinding:
     return _binding(
         chat_id=chat_id,
         agent_id=str(agent_id),
-        memory_thread_id=str(memory_thread_id)
+        memory_thread_id=str(memory_thread_id),
     )
 
 
 @cl.on_chat_start
 async def on_chat_start() -> None:
     binding = _binding(
-        chat_id=cl.context.session.thread_id
+        chat_id=cl.context.session.thread_id,
     )
     _store_binding(binding)
 
-    await cl.Message(content="Чат запущен!").send()
+    await cl.Message(
+        content="Чат запущен.",
+    ).send()
 
 
 @cl.on_chat_resume
@@ -103,7 +107,7 @@ async def on_chat_resume(thread: ThreadDict) -> None:
         agent_id=str(metadata.get("agent_id") or "general"),
         memory_thread_id=str(
             metadata.get("memory_thread_id") or chat_id
-        )
+        ),
     )
     _store_binding(binding)
 
@@ -112,30 +116,28 @@ async def on_chat_resume(thread: ThreadDict) -> None:
 async def on_message(message: cl.Message) -> None:
     binding = _current_binding()
 
-    # Persist the application binding in the UI thread as metadata. At the
-    # moment this is mostly future-proofing because agent_id is always general
-    # and memory_thread_id == chat_id, but it becomes important once users can
-    # select different agents or fork/reset memory.
+    # Persist the application binding in the UI thread as metadata. This
+    # becomes important once users can select agents or fork/reset memory.
     await chainlit_layer.update_thread(
         binding.chat_id,
         metadata={
             "agent_id": binding.agent_id,
-            "memory_thread_id": binding.memory_thread_id
-        }
+            "memory_thread_id": binding.memory_thread_id,
+        },
     )
 
     response = await application.runtime.run(
         binding=binding,
-        text=message.content
+        text=message.content,
     )
 
     await cl.Message(
-        content=response
+        content=response,
     ).send()
 
 
 async def cleanup_chat(chat_id: str) -> None:
-    await application.close()
+    await application.delete_chat(chat_id)
 
 
 chainlit_layer.chat_cleanup = cleanup_chat
@@ -146,24 +148,42 @@ async def close_resources() -> None:
 
 
 # Chainlit owns the ASGI lifespan. Wrap it instead of replacing it so our
-# SQLite connection is closed after Chainlit finishes its own shutdown work
-# (including closing Chainlit data layer).
-if getattr(app.state, "_agent_chat_base_lifespan", None) is None:
-    app.state._agent_chat_base_lifespan = app.router.lifespan_context
+# application resources are closed after Chainlit finishes its own shutdown.
+if getattr(
+    app.state,
+    "_agent_chat_base_lifespan",
+    None,
+) is None:
+    app.state._agent_chat_base_lifespan = (
+        app.router.lifespan_context
+    )
 
     @asynccontextmanager
-    async def agent_chat_lifespan(chainlit_app):
+    async def agent_chat_lifespan(
+        chainlit_app,
+    ):
         try:
-            async with chainlit_app.state._agent_chat_base_lifespan(
-                chainlit_app
+            async with (
+                chainlit_app.state._agent_chat_base_lifespan(
+                    chainlit_app
+                )
             ) as state:
                 yield state
         finally:
-            cleanup = getattr(chainlit_app.state, "_agent_chat_close_resources", None)
+            cleanup = getattr(
+                chainlit_app.state,
+                "_agent_chat_close_resources",
+                None,
+            )
+
             if cleanup is not None:
                 await cleanup()
 
-    app.router.lifespan_context = agent_chat_lifespan
+    app.router.lifespan_context = (
+        agent_chat_lifespan
+    )
 
 
-app.state._agent_chat_close_resources = close_resources
+app.state._agent_chat_close_resources = (
+    close_resources
+)
