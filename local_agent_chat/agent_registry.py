@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.tools import BaseTool
 from langgraph.checkpoint.base import BaseCheckpointSaver
 
 AgentBuilder = Callable[..., Any]
 ModelFactory = Callable[[], BaseChatModel]
+ToolFactory = Callable[[], Sequence[BaseTool]]
 CheckpointerProvider = Callable[[], Awaitable[BaseCheckpointSaver]]
 
 
@@ -18,6 +20,7 @@ class AgentDefinition:
     id: str
     build: AgentBuilder
     model_factory: ModelFactory
+    tools_factory: ToolFactory | None = None
 
 
 class AgentRegistry:
@@ -50,10 +53,12 @@ class AgentRegistry:
 
             checkpointer = await self._checkpointer_provider()
             model = definition.model_factory()
+            tools = tuple(definition.tools_factory()) if definition.tools_factory is not None else ()
 
             graph = definition.build(
                 model=model,
-                checkpointer=checkpointer
+                checkpointer=checkpointer,
+                tools=tools
             )
 
             self._graphs[agent_id] = graph
