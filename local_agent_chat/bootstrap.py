@@ -3,7 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .agent_registry import AgentDefinition, AgentRegistry
-from .agents.general import build_general_agent
+from .agents import (
+    ANALYST_AGENT_PROFILE,
+    ANALYST_AGENT_PROMPT,
+    GENERAL_AGENT_PROFILE,
+    GENERAL_AGENT_PROMPT,
+    build_langchain_agent
+)
 from .memory import SQLiteAgentMemory
 from .models import create_model
 from .runtime import AgentRuntime
@@ -41,14 +47,26 @@ def create_application() -> Application:
 
     memory = SQLiteAgentMemory(settings.checkpoints_db)
     history = SQLiteRuntimeHistory(settings.runtime_history_db)
-    registry = AgentRegistry(checkpointer_provider=memory.checkpointer)
+    registry = AgentRegistry(checkpointer_provider=memory.checkpointer,)
+    memory_tools = lambda: create_cross_chat_memory_tools(history)
 
     registry.register(
         AgentDefinition(
-            id="general",
-            build=build_general_agent,
+            profile=GENERAL_AGENT_PROFILE,
+            build=build_langchain_agent,
             model_factory=create_model,
-            tools_factory=lambda: create_cross_chat_memory_tools(history)
+            system_prompt=GENERAL_AGENT_PROMPT,
+            tools_factory=memory_tools,
+        )
+    )
+
+    registry.register(
+        AgentDefinition(
+            profile=ANALYST_AGENT_PROFILE,
+            build=build_langchain_agent,
+            model_factory=create_model,
+            system_prompt=ANALYST_AGENT_PROMPT,
+            tools_factory=memory_tools,
         )
     )
 
@@ -57,5 +75,5 @@ def create_application() -> Application:
         memory=memory,
         history=history,
         registry=registry,
-        runtime=AgentRuntime(registry, history)
+        runtime=AgentRuntime(registry, history),
     )
