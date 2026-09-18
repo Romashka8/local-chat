@@ -49,7 +49,7 @@ class SQLiteAgentMemory:
         # SQLite saver does not initialize a fresh database on its own.
         saver = await self.checkpointer()
         await saver.setup()
-        await saver.delete_thread(thread_id)
+        await saver.adelete_thread(thread_id)
 
     async def close(self) -> None:
         """Close the owned SQLite connection during application shutdown."""
