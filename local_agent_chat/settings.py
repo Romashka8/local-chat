@@ -11,6 +11,17 @@ class Settings:
     checkpoints_db: Path
     chainlit_db: Path
     runtime_history_db: Path
+    sandboxes_dir: Path
+    blobs_dir: Path
+    max_upload_file_bytes: int
+    max_chat_files_bytes: int
+
+
+def _mb_env(name: str, default: int) -> int:
+    value = int(os.getenv(name, str(default)))
+    if value <= 0:
+        raise ValueError(f"{name} must be positive")
+    return value * 1024 * 1024
 
 
 def load_settings() -> Settings:
@@ -19,7 +30,7 @@ def load_settings() -> Settings:
     data_dir = Path(
         os.getenv(
             "APP_DATA_DIR",
-            str(project_root / ".local-agent-chat")
+            str(project_root / ".local-agent-chat"),
         )
     ).expanduser()
 
@@ -27,5 +38,9 @@ def load_settings() -> Settings:
         data_dir=data_dir,
         checkpoints_db=data_dir / "checkpoints.sqlite3",
         chainlit_db=data_dir / "chainlit.sqlite3",
-        runtime_history_db=data_dir / "runtime-history.sqlite3"
+        runtime_history_db=data_dir / "runtime-history.sqlite3",
+        sandboxes_dir=data_dir / "sandboxes",
+        blobs_dir=data_dir / "blobs",
+        max_upload_file_bytes=_mb_env("MAX_UPLOAD_FILE_MB", 20),
+        max_chat_files_bytes=_mb_env("MAX_CHAT_FILES_MB", 200),
     )
