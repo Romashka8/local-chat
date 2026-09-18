@@ -1,1 +1,1 @@
-"""Application tools exposed to agent graphs"""
+"""Application tool factories exposed to registered agents."""
