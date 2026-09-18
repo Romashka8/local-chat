@@ -14,7 +14,9 @@ from .memory import SQLiteAgentMemory
 from .models import create_model
 from .runtime import AgentRuntime
 from .runtime_history import SQLiteRuntimeHistory
+from .sandbox_files import SandboxFiles
 from .settings import Settings, load_settings
+from .tools.chat_files import create_chat_file_tools
 from .tools.cross_chat_memory import create_cross_chat_memory_tools
 
 
@@ -23,23 +25,21 @@ class Application:
     settings: Settings
     memory: SQLiteAgentMemory
     history: SQLiteRuntimeHistory
+    files: SandboxFiles
     registry: AgentRegistry
     runtime: AgentRuntime
 
     async def delete_chat(self, chat_id: str) -> None:
-        """Delete application state owned by one chat.
-        
-        Today chat_id == LangGraph memory_thread_id. Keeping this operation on
-        Application gives us one place to expand cleanup when sandboxes, runtime
-        history, attachments, etc. are added later.
-        """
+        """Delete application state owned by one Chat."""
         await self.history.delete_chat(chat_id)
         await self.memory.delete_thread(chat_id)
+        await self.files.delete_chat(chat_id)
 
     async def close(self) -> None:
         self.registry.clear()
         await self.history.close()
         await self.memory.close()
+
 
 def create_application() -> Application:
     settings = load_settings()
@@ -47,8 +47,21 @@ def create_application() -> Application:
 
     memory = SQLiteAgentMemory(settings.checkpoints_db)
     history = SQLiteRuntimeHistory(settings.runtime_history_db)
-    registry = AgentRegistry(checkpointer_provider=memory.checkpointer,)
-    memory_tools = lambda: create_cross_chat_memory_tools(history)
+    files = SandboxFiles(
+        settings.sandboxes_dir,
+        max_file_bytes=settings.max_upload_file_bytes,
+        max_chat_bytes=settings.max_chat_files_bytes,
+    )
+
+    registry = AgentRegistry(
+        checkpointer_provider=memory.checkpointer,
+    )
+
+    def shared_tools():
+        return (
+            *create_cross_chat_memory_tools(history),
+            *create_chat_file_tools(files),
+        )
 
     registry.register(
         AgentDefinition(
@@ -56,7 +69,7 @@ def create_application() -> Application:
             build=build_langchain_agent,
             model_factory=create_model,
             system_prompt=GENERAL_AGENT_PROMPT,
-            tools_factory=memory_tools,
+            tools_factory=shared_tools,
         )
     )
 
@@ -66,7 +79,7 @@ def create_application() -> Application:
             build=build_langchain_agent,
             model_factory=create_model,
             system_prompt=ANALYST_AGENT_PROMPT,
-            tools_factory=memory_tools,
+            tools_factory=shared_tools,
         )
     )
 
@@ -74,6 +87,7 @@ def create_application() -> Application:
         settings=settings,
         memory=memory,
         history=history,
+        files=files,
         registry=registry,
         runtime=AgentRuntime(registry, history),
     )
