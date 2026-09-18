@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from chainlit.data.sql_alchemy import SQLAlchemyDataLayer
+from chainlit.data.storage_clients.base import BaseStorageClient
 from chainlit.data.utils import queue_until_user_message
 from chainlit.types import ThreadDict
 
@@ -246,7 +247,10 @@ class SQLiteChainlitDataLayer(SQLAlchemyDataLayer):
         await super().delete_thread(thread_id)
 
 
-def create_chainlit_data_layer(path: Path) -> SQLiteChainlitDataLayer:
+def create_chainlit_data_layer(
+    path: Path,
+    storage: BaseStorageClient | None = None,
+) -> SQLiteChainlitDataLayer:
     """Create/migrate the local Chainlit UI database and return its data layer."""
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -255,4 +259,5 @@ def create_chainlit_data_layer(path: Path) -> SQLiteChainlitDataLayer:
 
     return SQLiteChainlitDataLayer(
         conninfo=f"sqlite+aiosqlite:///{path}",
+        storage_provider=storage,
     )
