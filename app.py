@@ -1,19 +1,26 @@
-# chainlit run app.py -w
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
 import chainlit as cl
-from chainlit.server import app
+from chainlit.server import app, router
 from chainlit.types import ThreadDict
+from fastapi import HTTPException
+from fastapi.responses import FileResponse
 
 from local_agent_chat.bootstrap import create_application
 from local_agent_chat.chainlit_data import create_chainlit_data_layer
+from local_agent_chat.chainlit_uploads import persist_message_uploads
+from local_agent_chat.local_storage import LocalStorageClient
 from local_agent_chat.runtime import ChatBinding
 
 
 application = create_application()
-chainlit_layer = create_chainlit_data_layer(application.settings.chainlit_db)
+storage = LocalStorageClient(application.settings.blobs_dir)
+chainlit_layer = create_chainlit_data_layer(
+    application.settings.chainlit_db,
+    storage,
+)
 
 
 @cl.data_layer
@@ -62,7 +69,9 @@ def _current_user_id() -> str:
 
 def _require_agent(agent_id: str) -> str:
     if not application.registry.has(agent_id):
-        raise RuntimeError(f"Chat references an unavailable agent: {agent_id!r}")
+        raise RuntimeError(
+            f"Chat references an unavailable agent: {agent_id!r}"
+        )
     return agent_id
 
 
@@ -93,6 +102,22 @@ def _store_binding(binding: ChatBinding) -> None:
     # application binding and remains authoritative after a chat is created.
     cl.user_session.set("agent_id", binding.agent_id)
     cl.user_session.set("memory_thread_id", binding.memory_thread_id)
+
+
+def _message_with_uploaded_files(text: str, filenames: tuple[str, ...]) -> str:
+    if not filenames:
+        return text
+
+    attachment_note = "\n".join(
+        [
+            "Files uploaded with this message and available through file tools:",
+            *(f"- {name}" for name in filenames),
+        ]
+    )
+    stripped = text.strip()
+    if stripped:
+        return f"{stripped}\n\n{attachment_note}"
+    return attachment_note
 
 
 def _current_binding() -> ChatBinding:
@@ -146,7 +171,9 @@ async def on_chat_resume(thread: ThreadDict) -> None:
     binding = _binding(
         chat_id=chat_id,
         agent_id=agent_id,
-        memory_thread_id=str(metadata.get("memory_thread_id") or chat_id),
+        memory_thread_id=str(
+            metadata.get("memory_thread_id") or chat_id
+        ),
     )
     _store_binding(binding)
 
@@ -166,9 +193,20 @@ async def on_message(message: cl.Message) -> None:
         },
     )
 
+    uploaded_files = await persist_message_uploads(
+        chat_id=binding.chat_id,
+        elements=message.elements,
+        sandbox=application.files,
+    )
+
+    request_text = _message_with_uploaded_files(
+        message.content,
+        tuple(item.name for item in uploaded_files),
+    )
+
     response = await application.runtime.run(
         binding=binding,
-        text=message.content,
+        text=request_text,
     )
 
     await cl.Message(
@@ -183,29 +221,54 @@ async def cleanup_chat(chat_id: str) -> None:
 chainlit_layer.chat_cleanup = cleanup_chat
 
 
+@router.get("/files/{object_key:path}", include_in_schema=False)
+async def local_file(object_key: str):
+    try:
+        path = storage.path_for(object_key)
+    except ValueError as error:
+        raise HTTPException(status_code=404) from error
+
+    if not path.is_file():
+        raise HTTPException(status_code=404)
+
+    return FileResponse(
+        path,
+        media_type=storage.media_type(object_key),
+        filename=path.name,
+    )
+
+
+# Chainlit registers its SPA fallback before loading the user module. Keep this
+# route ahead of that catch-all so persisted element URLs return file bytes.
+_local_file_route = router.routes.pop()
+router.routes.insert(0, _local_file_route)
+
+
 async def close_resources() -> None:
     await application.close()
+    await storage.close()
 
 
 # Chainlit owns the ASGI lifespan. Wrap it instead of replacing it so our
 # application resources are closed after Chainlit finishes its own shutdown.
-if (
-    getattr(
-        app.state,
-        "_agent_chat_base_lifespan",
-        None,
+if getattr(
+    app.state,
+    "_agent_chat_base_lifespan",
+    None,
+) is None:
+    app.state._agent_chat_base_lifespan = (
+        app.router.lifespan_context
     )
-    is None
-):
-    app.state._agent_chat_base_lifespan = app.router.lifespan_context
 
     @asynccontextmanager
     async def agent_chat_lifespan(
         chainlit_app,
     ):
         try:
-            async with chainlit_app.state._agent_chat_base_lifespan(
-                chainlit_app
+            async with (
+                chainlit_app.state._agent_chat_base_lifespan(
+                    chainlit_app
+                )
             ) as state:
                 yield state
         finally:
@@ -218,7 +281,11 @@ if (
             if cleanup is not None:
                 await cleanup()
 
-    app.router.lifespan_context = agent_chat_lifespan
+    app.router.lifespan_context = (
+        agent_chat_lifespan
+    )
 
 
-app.state._agent_chat_close_resources = close_resources
+app.state._agent_chat_close_resources = (
+    close_resources
+)
