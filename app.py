@@ -110,7 +110,9 @@ def _message_with_uploaded_files(text: str, filenames: tuple[str, ...]) -> str:
 
     attachment_note = "\n".join(
         [
-            "Files uploaded with this message and available through file tools:",
+            "Files are already attached to THIS message and stored in the current chat.",
+            "Do not ask the user to upload them again. If the request depends on their",
+            "contents, use list_chat_files/read_chat_file before answering:",
             *(f"- {name}" for name in filenames),
         ]
     )
@@ -197,6 +199,8 @@ async def on_message(message: cl.Message) -> None:
         chat_id=binding.chat_id,
         elements=message.elements,
         sandbox=application.files,
+        storage=storage,
+        session_files=getattr(cl.context.session, "files", None),
     )
 
     request_text = _message_with_uploaded_files(
