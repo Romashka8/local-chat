@@ -50,17 +50,17 @@ def create_application() -> Application:
     files = SandboxFiles(
         settings.sandboxes_dir,
         max_file_bytes=settings.max_upload_file_bytes,
-        max_chat_bytes=settings.max_chat_files_bytes,
+        max_chat_bytes=settings.max_chat_files_bytes
     )
 
     registry = AgentRegistry(
-        checkpointer_provider=memory.checkpointer,
+        checkpointer_provider=memory.checkpointer
     )
 
     def shared_tools():
         return (
             *create_cross_chat_memory_tools(history),
-            *create_chat_file_tools(files),
+            *create_chat_file_tools(files)
         )
 
     registry.register(
@@ -69,7 +69,7 @@ def create_application() -> Application:
             build=build_langchain_agent,
             model_factory=create_model,
             system_prompt=GENERAL_AGENT_PROMPT,
-            tools_factory=shared_tools,
+            tools_factory=shared_tools
         )
     )
 
@@ -79,7 +79,7 @@ def create_application() -> Application:
             build=build_langchain_agent,
             model_factory=create_model,
             system_prompt=ANALYST_AGENT_PROMPT,
-            tools_factory=shared_tools,
+            tools_factory=shared_tools
         )
     )
 
@@ -89,5 +89,5 @@ def create_application() -> Application:
         history=history,
         files=files,
         registry=registry,
-        runtime=AgentRuntime(registry, history),
+        runtime=AgentRuntime(registry, history)
     )
