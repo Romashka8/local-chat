@@ -14,7 +14,7 @@ def create_chat_file_tools(sandbox: SandboxFiles) -> Sequence[BaseTool]:
 
     @tool
     async def list_chat_files(runtime: ToolRuntime[AgentContext]) -> str:
-        """List files uploaded to the CURRENT chat.
+        """List files already uploaded to the CURRENT chat.
 
         Use this when the user refers to an attachment without giving its exact
         stored name, or before reading files when several attachments exist.
@@ -36,16 +36,16 @@ def create_chat_file_tools(sandbox: SandboxFiles) -> Sequence[BaseTool]:
         offset: int = 0,
         limit: int = 200,
     ) -> str:
-        """Read a text file uploaded to the CURRENT chat.
+        """Read a file already uploaded to the CURRENT chat.
 
-        `path` must be a filename returned by list_chat_files. `offset` is a
-        zero-based line offset and `limit` is the number of lines to return
-        (maximum 500). For long files, continue reading using the next offset
-        reported by the tool. This tool is read-only and cannot access host
-        paths or files from other chats.
+        Supports plain-text files and PDFs with an embedded text layer. `path`
+        must be a filename returned by list_chat_files. `offset` is a zero-based
+        extracted-line offset and `limit` is the number of lines to return
+        (maximum 500). For long files, continue with the next offset reported by
+        the tool. Scanned/image-only PDFs require OCR, which is not configured.
         """
         try:
-            return await sandbox.read_text(
+            return await sandbox.read_file(
                 runtime.context.chat_id,
                 path,
                 offset=offset,
