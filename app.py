@@ -208,13 +208,27 @@ async def on_message(message: cl.Message) -> None:
         tuple(item.name for item in uploaded_files),
     )
 
+    artifacts_before = {
+        item.name for item in await application.artifacts.list_artifacts(binding.chat_id)
+    }
+
     response = await application.runtime.run(
         binding=binding,
         text=request_text,
     )
 
+    artifacts_after = await application.artifacts.list_artifacts(binding.chat_id)
+    new_artifacts = [
+        item for item in artifacts_after if item.name not in artifacts_before
+    ]
+    elements = [
+        cl.File(name=item.name, path=str(item.path))
+        for item in new_artifacts
+    ]
+
     await cl.Message(
         content=response,
+        elements=elements,
     ).send()
 
 
@@ -255,41 +269,21 @@ async def close_resources() -> None:
 
 # Chainlit owns the ASGI lifespan. Wrap it instead of replacing it so our
 # application resources are closed after Chainlit finishes its own shutdown.
-if getattr(
-    app.state,
-    "_agent_chat_base_lifespan",
-    None,
-) is None:
-    app.state._agent_chat_base_lifespan = (
-        app.router.lifespan_context
-    )
+if getattr(app.state, "_agent_chat_base_lifespan", None) is None:
+    app.state._agent_chat_base_lifespan = (app.router.lifespan_context)
 
     @asynccontextmanager
-    async def agent_chat_lifespan(
-        chainlit_app,
-    ):
+    async def agent_chat_lifespan(chainlit_app):
         try:
-            async with (
-                chainlit_app.state._agent_chat_base_lifespan(
-                    chainlit_app
-                )
-            ) as state:
+            async with (chainlit_app.state._agent_chat_base_lifespan(chainlit_app)) as state:
                 yield state
         finally:
-            cleanup = getattr(
-                chainlit_app.state,
-                "_agent_chat_close_resources",
-                None,
-            )
+            cleanup = getattr(chainlit_app.state, "_agent_chat_close_resources", None)
 
             if cleanup is not None:
                 await cleanup()
 
-    app.router.lifespan_context = (
-        agent_chat_lifespan
-    )
+    app.router.lifespan_context = (agent_chat_lifespan)
 
 
-app.state._agent_chat_close_resources = (
-    close_resources
-)
+app.state._agent_chat_close_resources = (close_resources)
