@@ -128,6 +128,23 @@ class SandboxFiles:
         ]
         return tuple(sorted(result, key=lambda item: item.name.casefold()))
 
+
+    def resolve_file(self, chat_id: str, relative_path: str) -> Path:
+        """Resolve one uploaded file inside the current chat sandbox."""
+        requested = PurePosixPath(relative_path)
+        if requested.is_absolute() or ".." in requested.parts:
+            raise ValueError("File path must stay inside the current Chat")
+        if len(requested.parts) != 1:
+            raise ValueError("Uploaded files are stored at the Chat root")
+
+        files = self.files_dir(chat_id).resolve()
+        path = (files / requested.name).resolve()
+        if not path.is_relative_to(files):
+            raise ValueError("File path escaped the current Chat")
+        if path.is_symlink() or not path.is_file():
+            raise FileNotFoundError(relative_path)
+        return path
+
     async def read_file(
         self,
         chat_id: str,
@@ -152,19 +169,7 @@ class SandboxFiles:
         offset: int,
         limit: int,
     ) -> str:
-        requested = PurePosixPath(relative_path)
-        if requested.is_absolute() or ".." in requested.parts:
-            raise ValueError("File path must stay inside the current Chat")
-        if len(requested.parts) != 1:
-            raise ValueError("Uploaded files are stored at the Chat root")
-
-        files = self.files_dir(chat_id).resolve()
-        path = (files / requested.name).resolve()
-        if not path.is_relative_to(files):
-            raise ValueError("File path escaped the current Chat")
-        if path.is_symlink() or not path.is_file():
-            raise FileNotFoundError(relative_path)
-
+        path = self.resolve_file(chat_id, relative_path)
         return render_file(path, offset=offset, limit=limit)
 
     async def read_text(
