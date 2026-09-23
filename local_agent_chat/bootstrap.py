@@ -10,14 +10,19 @@ from .agents import (
     GENERAL_AGENT_PROMPT,
     build_langchain_agent
 )
+from .analytics import DataAnalysisService
+from .artifacts import ArtifactStore
+from .knowledge import SQLiteKnowledgeBase
 from .memory import SQLiteAgentMemory
 from .models import create_model
 from .runtime import AgentRuntime
 from .runtime_history import SQLiteRuntimeHistory
 from .sandbox_files import SandboxFiles
 from .settings import Settings, load_settings
+from .tools.analytics import create_analytics_tools
 from .tools.chat_files import create_chat_file_tools
 from .tools.cross_chat_memory import create_cross_chat_memory_tools
+from .tools.knowledge import create_knowledge_tools
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +31,9 @@ class Application:
     memory: SQLiteAgentMemory
     history: SQLiteRuntimeHistory
     files: SandboxFiles
+    artifacts: ArtifactStore
+    knowledge: SQLiteKnowledgeBase
+    analytics: DataAnalysisService
     registry: AgentRegistry
     runtime: AgentRuntime
 
@@ -33,7 +41,10 @@ class Application:
         """Delete application state owned by one Chat."""
         await self.history.delete_chat(chat_id)
         await self.memory.delete_thread(chat_id)
+        # Remove source files/artifacts before the RAG index so a concurrent or
+        # subsequent retrieval cannot lazily re-index a chat being deleted.
         await self.files.delete_chat(chat_id)
+        await self.knowledge.delete_chat(chat_id)
 
     async def close(self) -> None:
         self.registry.clear()
@@ -52,6 +63,14 @@ def create_application() -> Application:
         max_file_bytes=settings.max_upload_file_bytes,
         max_chat_bytes=settings.max_chat_files_bytes
     )
+    artifacts = ArtifactStore(settings.sandboxes_dir)
+    knowledge = SQLiteKnowledgeBase(settings.knowledge_db, files)
+    analytics = DataAnalysisService(
+        files,
+        artifacts,
+        max_rows=settings.analyst_max_dataset_rows,
+        max_columns=settings.analyst_max_columns
+    )
 
     registry = AgentRegistry(
         checkpointer_provider=memory.checkpointer
@@ -61,6 +80,13 @@ def create_application() -> Application:
         return (
             *create_cross_chat_memory_tools(history),
             *create_chat_file_tools(files)
+        )
+
+    def analyst_tools():
+        return (
+            *shared_tools(),
+            *create_knowledge_tools(knowledge),
+            *create_analytics_tools(analytics)
         )
 
     registry.register(
@@ -79,7 +105,7 @@ def create_application() -> Application:
             build=build_langchain_agent,
             model_factory=create_model,
             system_prompt=ANALYST_AGENT_PROMPT,
-            tools_factory=shared_tools
+            tools_factory=analyst_tools
         )
     )
 
@@ -88,6 +114,9 @@ def create_application() -> Application:
         memory=memory,
         history=history,
         files=files,
+        artifacts=artifacts,
+        knowledge=knowledge,
+        analytics=analytics,
         registry=registry,
         runtime=AgentRuntime(registry, history)
     )
