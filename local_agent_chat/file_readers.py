@@ -37,6 +37,14 @@ class _NoPdfTextError(ValueError):
     """The PDF opened successfully but exposed no usable text layer."""
 
 
+def extract_document_text(path: Path) -> str:
+    """Extract plain text for knowledge indexing without line-number rendering."""
+    if path.suffix.casefold() == ".pdf":
+        lines, _details = _pdf_lines(path)
+        return "\n".join(lines)
+    return "\n".join(_text_lines(path))
+
+
 def render_file(
     path: Path,
     *,
