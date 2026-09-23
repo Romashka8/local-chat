@@ -5,9 +5,9 @@ ANALYST_AGENT_PROFILE = AgentProfile(
     id="analyst",
     label="Analyst",
     description=(
-        "Агент-аналитик: формализует задачу, отделяет факты от гипотез и "
-        "делает выводы с учётом ограничений данных."
-    )
+        "Агент-аналитик v1: читает CSV/XLSX, строит EDA в HTML и использует "
+        "RAG по загруженным PDF/TXT-методологиям для интерпретации результатов."
+    ),
 )
 
 __all__ = ["ANALYST_AGENT_PROFILE", "ANALYST_AGENT_PROMPT"]
