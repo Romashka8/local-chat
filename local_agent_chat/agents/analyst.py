@@ -5,7 +5,7 @@ ANALYST_AGENT_PROFILE = AgentProfile(
     id="analyst",
     label="Analyst",
     description=(
-        "Агент-аналитик v1: читает CSV/XLSX, строит EDA в HTML и использует "
+        "Агент-аналитик: читает CSV/XLSX, строит EDA в HTML и использует "
         "RAG по загруженным PDF/TXT-методологиям для интерпретации результатов."
     ),
 )
