@@ -41,16 +41,12 @@ class AgentRuntime:
             graph = await self._registry.get(binding.agent_id)
             result = await graph.ainvoke(
                 {"messages": [HumanMessage(content=text)]},
-                config={
-                    "configurable": {
-                        "thread_id": binding.memory_thread_id
-                    }
-                },
+                config={"configurable": {"thread_id": binding.memory_thread_id}},
                 context=AgentContext(
                     user_id=binding.user_id,
                     chat_id=binding.chat_id,
-                    agent_id=binding.agent_id
-                )
+                    agent_id=binding.agent_id,
+                ),
             )
 
             response = _message_text(result["messages"][-1])
@@ -64,15 +60,16 @@ class AgentRuntime:
                     chat_id=binding.chat_id,
                     agent_id=binding.agent_id,
                     user_text=text,
-                    assistant_text=response
+                    assistant_text=response,
                 )
             except Exception:
                 logger.exception(
                     "Failed to persist runtime turn for cross-chat retrieval: chat=%s",
-                    binding.chat_id
+                    binding.chat_id,
                 )
 
             return response
+
 
 def _message_text(message: Any) -> str:
     content = getattr(message, "content", message)
@@ -80,7 +77,7 @@ def _message_text(message: Any) -> str:
         return content
 
     if isinstance(content, list):
-        parts : list[str] = []
+        parts: list[str] = []
         for block in content:
             if isinstance(block, str):
                 parts.append(block)
