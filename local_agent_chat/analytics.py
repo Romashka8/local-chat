@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
@@ -150,11 +151,13 @@ class DataAnalysisService:
         missing_counts = frame.isna().sum().sort_values(ascending=False)
         missing_nonzero = missing_counts[missing_counts > 0]
         constants = [
-            column for column in frame.columns
+            column
+            for column in frame.columns
             if frame[column].nunique(dropna=False) <= 1
         ]
         high_cardinality = [
-            column for column in categorical_columns
+            column
+            for column in categorical_columns
             if frame[column].nunique(dropna=True) > max(50, int(len(frame) * 0.5))
         ]
 
@@ -176,12 +179,16 @@ class DataAnalysisService:
             {
                 "column": frame.columns,
                 "dtype": [str(dtype) for dtype in frame.dtypes],
-                "missing": [int(frame[column].isna().sum()) for column in frame.columns],
+                "missing": [
+                    int(frame[column].isna().sum()) for column in frame.columns
+                ],
                 "missing_pct": [
                     round(float(frame[column].isna().mean()) * 100, 2)
                     for column in frame.columns
                 ],
-                "unique": [int(frame[column].nunique(dropna=True)) for column in frame.columns],
+                "unique": [
+                    int(frame[column].nunique(dropna=True)) for column in frame.columns
+                ],
             }
         )
 
@@ -196,55 +203,82 @@ class DataAnalysisService:
         ]
 
         if not missing_nonzero.empty:
-            sections.extend([
-                "<h2>Missingness</h2>",
-                _image_html(_missingness_chart(frame)),
-            ])
+            sections.extend(
+                [
+                    "<h2>Missingness</h2>",
+                    _image_html(_missingness_chart(frame)),
+                ]
+            )
 
         if numeric_columns:
-            describe = frame[numeric_columns].describe().T.reset_index().rename(columns={"index": "column"})
-            sections.extend([
-                "<h2>Numeric summary</h2>",
-                _table_html(describe.round(4)),
-            ])
+            describe = (
+                frame[numeric_columns]
+                .describe()
+                .T.reset_index()
+                .rename(columns={"index": "column"})
+            )
+            sections.extend(
+                [
+                    "<h2>Numeric summary</h2>",
+                    _table_html(describe.round(4)),
+                ]
+            )
             for column in numeric_columns[:6]:
                 image = _numeric_histogram(frame[column], column)
                 if image:
-                    sections.extend([
-                        f"<h3>Distribution: {html.escape(str(column))}</h3>",
-                        _image_html(image),
-                    ])
+                    sections.extend(
+                        [
+                            f"<h3>Distribution: {html.escape(str(column))}</h3>",
+                            _image_html(image),
+                        ]
+                    )
 
         if categorical_columns:
             categorical_rows: list[dict[str, Any]] = []
             for column in categorical_columns[:12]:
-                values = frame[column].astype("string").fillna("<NA>").value_counts(dropna=False).head(8)
+                values = (
+                    frame[column]
+                    .astype("string")
+                    .fillna("<NA>")
+                    .value_counts(dropna=False)
+                    .head(8)
+                )
                 for value, count in values.items():
                     categorical_rows.append(
                         {
                             "column": column,
                             "value": _compact_value(value),
                             "count": int(count),
-                            "share_pct": round(int(count) / max(len(frame), 1) * 100, 2),
+                            "share_pct": round(
+                                int(count) / max(len(frame), 1) * 100, 2
+                            ),
                         }
                     )
             if categorical_rows:
-                sections.extend([
-                    "<h2>Categorical top values</h2>",
-                    _table_html(pd.DataFrame(categorical_rows)),
-                ])
+                sections.extend(
+                    [
+                        "<h2>Categorical top values</h2>",
+                        _table_html(pd.DataFrame(categorical_rows)),
+                    ]
+                )
 
-        correlation_pairs = _top_correlations(frame[numeric_columns]) if len(numeric_columns) >= 2 else []
+        correlation_pairs = (
+            _top_correlations(frame[numeric_columns])
+            if len(numeric_columns) >= 2
+            else []
+        )
         if correlation_pairs:
             corr_table = pd.DataFrame(
                 correlation_pairs,
                 columns=["feature_1", "feature_2", "correlation"],
             )
-            sections.extend([
-                "<h2>Strongest numeric correlations</h2>",
-                _table_html(corr_table),
-                _image_html(_correlation_heatmap(frame[numeric_columns])),
-            ])
+            sections.extend(
+                [
+                    "<h2>Strongest numeric correlations</h2>",
+                    _table_html(corr_table),
+                    _image_html(_correlation_heatmap(frame[numeric_columns])),
+                ]
+            )
 
         if target:
             sections.append(f"<h2>Target: {html.escape(target)}</h2>")
@@ -257,11 +291,13 @@ class DataAnalysisService:
         sample = frame.head(20).copy()
         for column in sample.columns:
             sample[column] = sample[column].map(_compact_value)
-        sections.extend([
-            "<h2>Sample rows</h2>",
-            _table_html(sample),
-            "</main></body></html>",
-        ])
+        sections.extend(
+            [
+                "<h2>Sample rows</h2>",
+                _table_html(sample),
+                "</main></body></html>",
+            ]
+        )
 
         summary_lines = [
             f"EDA completed for {file_path.name}: {len(frame):,} rows, {frame.shape[1]} columns.",
@@ -273,13 +309,15 @@ class DataAnalysisService:
             summary_lines.append(
                 "Top missing columns: "
                 + ", ".join(
-                    f"{column}={int(count)} ({float(count)/max(len(frame),1)*100:.1f}%)"
+                    f"{column}={int(count)} ({float(count) / max(len(frame), 1) * 100:.1f}%)"
                     for column, count in top.items()
                 )
                 + "."
             )
         if constants:
-            summary_lines.append("Constant columns: " + ", ".join(map(str, constants[:10])) + ".")
+            summary_lines.append(
+                "Constant columns: " + ", ".join(map(str, constants[:10])) + "."
+            )
         if high_cardinality:
             summary_lines.append(
                 "High-cardinality categorical columns: "
@@ -288,7 +326,9 @@ class DataAnalysisService:
             )
         if correlation_pairs:
             a, b, value = correlation_pairs[0]
-            summary_lines.append(f"Strongest numeric correlation: {a} ↔ {b} = {value:.3f}.")
+            summary_lines.append(
+                f"Strongest numeric correlation: {a} ↔ {b} = {value:.3f}."
+            )
         if target:
             summary_lines.append(f"Target section included for {target!r}.")
 
@@ -356,7 +396,9 @@ def _read_delimited(path: Path, *, max_rows: int) -> pd.DataFrame:
         except UnicodeDecodeError as error:
             last_error = error
     if last_error is not None:
-        raise ValueError("CSV/TSV encoding is not UTF-8/UTF-8-SIG/CP1251") from last_error
+        raise ValueError(
+            "CSV/TSV encoding is not UTF-8/UTF-8-SIG/CP1251"
+        ) from last_error
     raise ValueError("Unable to read delimited dataset")
 
 
@@ -368,7 +410,9 @@ def _compact_value(value: Any) -> str:
 
 
 def _safe_stem(stem: str) -> str:
-    result = "".join(char if char.isalnum() or char in {"-", "_"} else "_" for char in stem)
+    result = "".join(
+        char if char.isalnum() or char in {"-", "_"} else "_" for char in stem
+    )
     return result.strip("_")[:80] or "dataset"
 
 
@@ -432,7 +476,7 @@ def _top_correlations(frame: pd.DataFrame) -> list[tuple[str, str, float]]:
     pairs: list[tuple[str, str, float]] = []
     columns = list(corr.columns)
     for i, left in enumerate(columns):
-        for right in columns[i + 1:]:
+        for right in columns[i + 1 :]:
             value = corr.loc[left, right]
             if pd.notna(value):
                 pairs.append((str(left), str(right), float(value)))
@@ -455,7 +499,9 @@ def _correlation_heatmap(frame: pd.DataFrame) -> str:
     return _fig_to_data_uri(fig)
 
 
-def _target_section(series: pd.Series, target: str) -> tuple[str | None, pd.DataFrame | None]:
+def _target_section(
+    series: pd.Series, target: str
+) -> tuple[str | None, pd.DataFrame | None]:
     if pd.api.types.is_numeric_dtype(series):
         clean = pd.to_numeric(series, errors="coerce").dropna()
         if clean.empty:
@@ -470,11 +516,16 @@ def _target_section(series: pd.Series, target: str) -> tuple[str | None, pd.Data
         {
             "value": [str(value) for value in values.index],
             "count": [int(value) for value in values.values],
-            "share_pct": [round(int(value) / max(len(series), 1) * 100, 2) for value in values.values],
+            "share_pct": [
+                round(int(value) / max(len(series), 1) * 100, 2)
+                for value in values.values
+            ],
         }
     )
     fig, ax = plt.subplots(figsize=(9, max(3, len(values) * 0.3)))
-    ax.barh([str(value) for value in reversed(values.index)], list(reversed(values.values)))
+    ax.barh(
+        [str(value) for value in reversed(values.index)], list(reversed(values.values))
+    )
     ax.set_title(f"Target distribution: {target}")
     ax.set_xlabel("Count")
     return _fig_to_data_uri(fig), table
