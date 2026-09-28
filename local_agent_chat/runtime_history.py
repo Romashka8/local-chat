@@ -57,6 +57,7 @@ AFTER UPDATE ON turns BEGIN
 END;
 """
 
+
 @dataclass(frozen=True, slots=True)
 class TurnSearchResult:
     turn_id: int
@@ -85,7 +86,6 @@ class SQLiteRuntimeHistory:
     user/assistant turns are recorded; tool logs and LangGraph checkpoints stay
     in their own persistence layers.
     """
-
 
     def __init__(self, database: Path) -> None:
         self._database = database
