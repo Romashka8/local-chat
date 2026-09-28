@@ -22,7 +22,7 @@ _KNOWLEDGE_SUFFIXES = {
     ".yml",
     ".xml",
     ".sql",
-    ".py"
+    ".py",
 }
 
 _SCHEMA = """
@@ -306,7 +306,9 @@ def _chunk_text(text: str, *, chunk_size: int = 1800, overlap: int = 250) -> lis
     if not normalized:
         return []
 
-    paragraphs = [part.strip() for part in re.split(r"\n{2,}", normalized) if part.strip()]
+    paragraphs = [
+        part.strip() for part in re.split(r"\n{2,}", normalized) if part.strip()
+    ]
     chunks: list[str] = []
     current = ""
 
@@ -332,7 +334,7 @@ def _chunk_text(text: str, *, chunk_size: int = 1800, overlap: int = 250) -> lis
 
         while len(current) > chunk_size:
             chunks.append(current[:chunk_size])
-            current = current[max(chunk_size - overlap, 1):]
+            current = current[max(chunk_size - overlap, 1) :]
 
     if current:
         chunks.append(current)
