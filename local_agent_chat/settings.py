@@ -54,8 +54,6 @@ def load_settings() -> Settings:
         blobs_dir=data_dir / "blobs",
         max_upload_file_bytes=_mb_env("MAX_UPLOAD_FILE_MB", 20),
         max_chat_files_bytes=_mb_env("MAX_CHAT_FILES_MB", 200),
-        analyst_max_dataset_rows=_positive_int_env(
-            "ANALYST_MAX_DATASET_ROWS", 200_000
-        ),
-        analyst_max_columns=_positive_int_env("ANALYST_MAX_COLUMNS", 200)
+        analyst_max_dataset_rows=_positive_int_env("ANALYST_MAX_DATASET_ROWS", 200_000),
+        analyst_max_columns=_positive_int_env("ANALYST_MAX_COLUMNS", 200),
     )
