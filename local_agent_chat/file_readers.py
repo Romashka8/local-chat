@@ -74,15 +74,11 @@ def render_file(
 
     selected = lines[offset : offset + limit]
     rendered = [
-        f"{index + 1}: {line}"
-        for index, line in enumerate(selected, start=offset)
+        f"{index + 1}: {line}" for index, line in enumerate(selected, start=offset)
     ]
     end = offset + len(selected)
 
-    header = (
-        f"File: {path.name} | {details} | "
-        f"lines {offset + 1}-{end} of {len(lines)}"
-    )
+    header = f"File: {path.name} | {details} | lines {offset + 1}-{end} of {len(lines)}"
     if end < len(lines):
         header += f" | continue with offset={end}"
 
