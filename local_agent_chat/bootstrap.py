@@ -8,7 +8,7 @@ from .agents import (
     ANALYST_AGENT_PROMPT,
     GENERAL_AGENT_PROFILE,
     GENERAL_AGENT_PROMPT,
-    build_langchain_agent
+    build_langchain_agent,
 )
 from .analytics import DataAnalysisService
 from .artifacts import ArtifactStore
@@ -61,7 +61,7 @@ def create_application() -> Application:
     files = SandboxFiles(
         settings.sandboxes_dir,
         max_file_bytes=settings.max_upload_file_bytes,
-        max_chat_bytes=settings.max_chat_files_bytes
+        max_chat_bytes=settings.max_chat_files_bytes,
     )
     artifacts = ArtifactStore(settings.sandboxes_dir)
     knowledge = SQLiteKnowledgeBase(settings.knowledge_db, files)
@@ -69,24 +69,22 @@ def create_application() -> Application:
         files,
         artifacts,
         max_rows=settings.analyst_max_dataset_rows,
-        max_columns=settings.analyst_max_columns
+        max_columns=settings.analyst_max_columns,
     )
 
-    registry = AgentRegistry(
-        checkpointer_provider=memory.checkpointer
-    )
+    registry = AgentRegistry(checkpointer_provider=memory.checkpointer)
 
     def shared_tools():
         return (
             *create_cross_chat_memory_tools(history),
-            *create_chat_file_tools(files)
+            *create_chat_file_tools(files),
         )
 
     def analyst_tools():
         return (
             *shared_tools(),
             *create_knowledge_tools(knowledge),
-            *create_analytics_tools(analytics)
+            *create_analytics_tools(analytics),
         )
 
     registry.register(
@@ -95,7 +93,7 @@ def create_application() -> Application:
             build=build_langchain_agent,
             model_factory=create_model,
             system_prompt=GENERAL_AGENT_PROMPT,
-            tools_factory=shared_tools
+            tools_factory=shared_tools,
         )
     )
 
@@ -105,7 +103,7 @@ def create_application() -> Application:
             build=build_langchain_agent,
             model_factory=create_model,
             system_prompt=ANALYST_AGENT_PROMPT,
-            tools_factory=analyst_tools
+            tools_factory=analyst_tools,
         )
     )
 
@@ -118,5 +116,5 @@ def create_application() -> Application:
         knowledge=knowledge,
         analytics=analytics,
         registry=registry,
-        runtime=AgentRuntime(registry, history)
+        runtime=AgentRuntime(registry, history),
     )
