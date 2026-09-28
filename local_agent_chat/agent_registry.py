@@ -108,14 +108,18 @@ class AgentRegistry:
 
             checkpointer = await self._checkpointer_provider()
             model = definition.model_factory()
-            tools = tuple(definition.tools_factory()) if definition.tools_factory is not None else ()
+            tools = (
+                tuple(definition.tools_factory())
+                if definition.tools_factory is not None
+                else ()
+            )
 
             graph = definition.build(
                 agent_id=definition.id,
                 model=model,
                 checkpointer=checkpointer,
                 system_prompt=definition.system_prompt,
-                tools=tools
+                tools=tools,
             )
 
             self._graphs[agent_id] = graph
