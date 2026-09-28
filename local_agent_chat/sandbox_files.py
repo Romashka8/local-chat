@@ -128,7 +128,6 @@ class SandboxFiles:
         ]
         return tuple(sorted(result, key=lambda item: item.name.casefold()))
 
-
     def resolve_file(self, chat_id: str, relative_path: str) -> Path:
         """Resolve one uploaded file inside the current chat sandbox."""
         requested = PurePosixPath(relative_path)
@@ -181,9 +180,7 @@ class SandboxFiles:
         limit: int = 200,
     ) -> str:
         # Backward-compatible alias kept for callers from the previous scaffold.
-        return await self.read_file(
-            chat_id, relative_path, offset=offset, limit=limit
-        )
+        return await self.read_file(chat_id, relative_path, offset=offset, limit=limit)
 
     async def delete_chat(self, chat_id: str) -> None:
         await self._mutate(chat_id, lambda: self._delete_chat(chat_id))
