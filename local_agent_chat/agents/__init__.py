@@ -1,10 +1,13 @@
 from .analyst import ANALYST_AGENT_PROFILE, ANALYST_AGENT_PROMPT
 from .base import build_langchain_agent
+from .collection_simulator import COLLECTION_SIMULATOR_PROFILE, COLLECTION_SIMULATOR_PROMPT
 from .general import GENERAL_AGENT_PROFILE, GENERAL_AGENT_PROMPT
 
 __all__ = [
     "ANALYST_AGENT_PROFILE",
     "ANALYST_AGENT_PROMPT",
+    "COLLECTION_SIMULATOR_PROFILE",
+    "COLLECTION_SIMULATOR_PROMPT",
     "GENERAL_AGENT_PROFILE",
     "GENERAL_AGENT_PROMPT",
     "build_langchain_agent",
