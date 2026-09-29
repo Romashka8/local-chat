@@ -18,6 +18,13 @@ class Settings:
     max_chat_files_bytes: int
     analyst_max_dataset_rows: int
     analyst_max_columns: int
+    collection_sim_state_db: Path
+    collection_sim_mode: str
+    gp_host: str | None
+    gp_port: int
+    gp_database: str | None
+    gp_user: str | None
+    gp_password: str | None
 
 
 def _mb_env(name: str, default: int) -> int:
@@ -56,4 +63,11 @@ def load_settings() -> Settings:
         max_chat_files_bytes=_mb_env("MAX_CHAT_FILES_MB", 200),
         analyst_max_dataset_rows=_positive_int_env("ANALYST_MAX_DATASET_ROWS", 200_000),
         analyst_max_columns=_positive_int_env("ANALYST_MAX_COLUMNS", 200),
+        collection_sim_state_db=data_dir / "collection-simulation.sqlite3",
+        collection_sim_mode=os.getenv("COLLECTION_SIM_MODE", "demo"),
+        gp_host=os.getenv("GP_HOST"),
+        gp_port=_positive_int_env("GP_PORT", 5432),
+        gp_database=os.getenv("GP_DATABASE"),
+        gp_user=os.getenv("GP_USER"),
+        gp_password=os.getenv("GP_PASSWORD"),
     )
