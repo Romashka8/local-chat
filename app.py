@@ -102,6 +102,75 @@ def _store_binding(binding: ChatBinding) -> None:
     cl.user_session.set("memory_thread_id", binding.memory_thread_id)
 
 
+# Analyzer tool selector: UI actions are per-chat and never affect General.
+TOOL_LABELS = {
+    "inspect_dataset": "Структура датасета",
+    "build_eda_report": "HTML EDA-отчёт",
+    "list_knowledge_documents": "Документы базы знаний",
+    "search_knowledge": "Поиск по документам",
+    "list_chat_files": "Список файлов чата",
+    "read_chat_file": "Чтение файла",
+    "search_past_chats": "Поиск по прошлым чатам",
+    "read_past_chat": "Чтение прошлого диалога",
+}
+
+
+def _selected_tool_for_binding(binding: ChatBinding) -> str | None:
+    """Read the validated mode for this request. None = normal automatic tools."""
+    if binding.agent_id != "analyst":
+        return None
+    selected = cl.user_session.get("analyst_selected_tool", "auto")
+    if selected == "auto" or selected is None:
+        return None
+    if selected not in application.registry.available_tools("analyst"):
+        return None
+    return str(selected)
+
+
+def _analyst_tool_action() -> list[cl.Action]:
+    return [
+        cl.Action(
+            name="analyst_open_tools",
+            label="🛠 Инструменты",
+            tooltip="Выбрать доступный инструмент Analyst",
+            payload={},
+        )
+    ]
+
+
+def _analyst_tool_menu() -> list[cl.Action]:
+    tool_names = application.registry.available_tools("analyst")
+    options = [("auto", "Автоматически (все инструменты)")]
+    options.extend((name, TOOL_LABELS.get(name, name)) for name in tool_names)
+    return [
+        cl.Action(
+            name="analyst_select_tool",
+            label=label,
+            tooltip=f"Режим: {name}",
+            payload={"tool": name},
+        )
+        for name, label in options
+    ]
+
+
+def _analyst_tool_label(name: str | None) -> str:
+    if name is None or name == "auto":
+        return "Автоматически (все инструменты)"
+    return TOOL_LABELS.get(name, name)
+
+
+def _analyst_selected_from_metadata(metadata: dict) -> str:
+    name = metadata.get("analyst_selected_tool", "auto")
+    if isinstance(name, str) and (name == "auto" or name in application.registry.available_tools("analyst")):
+        return name
+    return "auto"
+
+
+def _require_analyst_chat() -> ChatBinding | None:
+    binding = _current_binding()
+    return binding if binding.agent_id == "analyst" else None
+
+
 def _message_with_uploaded_files(text: str, filenames: tuple[str, ...]) -> str:
     if not filenames:
         return text
@@ -142,10 +211,12 @@ async def on_chat_start() -> None:
         agent_id=_new_chat_agent_id(),
     )
     _store_binding(binding)
+    cl.user_session.set("analyst_selected_tool", "auto")
 
     profile = application.registry.profile(binding.agent_id)
     await cl.Message(
         content=f"Чат запущен. Агент: **{profile.label}**.",
+        actions=_analyst_tool_action() if binding.agent_id == "analyst" else [],
     ).send()
 
 
@@ -174,6 +245,60 @@ async def on_chat_resume(thread: ThreadDict) -> None:
         memory_thread_id=str(metadata.get("memory_thread_id") or chat_id),
     )
     _store_binding(binding)
+    if binding.agent_id == "analyst":
+        cl.user_session.set(
+            "analyst_selected_tool", _analyst_selected_from_metadata(metadata)
+        )
+    else:
+        cl.user_session.set("analyst_selected_tool", "auto")
+
+
+@cl.action_callback("analyst_open_tools")
+async def analyst_open_tools(_action: cl.Action) -> None:
+    # Check the authoritative agent binding, never trust button payloads.
+    binding = _require_analyst_chat()
+    if binding is None:
+        return
+    selected = _selected_tool_for_binding(binding)
+    await cl.Message(
+        content=(
+            "**Инструменты Analyst**\n\n"
+            f"Текущий режим: **{_analyst_tool_label(selected)}**. "
+            "Выбери инструмент для следующих сообщений. "
+            "В ручном режиме LLM получит только выбранный tool."
+        ),
+        actions=_analyst_tool_menu(),
+    ).send()
+
+
+@cl.action_callback("analyst_select_tool")
+async def analyst_select_tool(action: cl.Action) -> None:
+    binding = _require_analyst_chat()
+    if binding is None:
+        return
+    selection = action.payload.get("tool")
+    allowed = {"auto", *application.registry.available_tools("analyst")}
+    if not isinstance(selection, str) or selection not in allowed:
+        await cl.Message(content="Недоступный инструмент Analyst.").send()
+        return
+
+    cl.user_session.set("analyst_selected_tool", selection)
+    await chainlit_layer.update_thread(
+        binding.chat_id,
+        metadata={
+            "agent_id": binding.agent_id,
+            "memory_thread_id": binding.memory_thread_id,
+            "analyst_selected_tool": selection,
+        },
+    )
+    await cl.Message(
+        content=(
+            f"Режим Analyst: **{_analyst_tool_label(selection)}**. "
+            "Напиши следующий запрос; для возврата к автоматическому "
+            "режиму нажми «Инструменты»."
+        ),
+        actions=_analyst_tool_action(),
+    ).send()
 
 
 @cl.on_message
@@ -188,6 +313,10 @@ async def on_message(message: cl.Message) -> None:
         metadata={
             "agent_id": binding.agent_id,
             "memory_thread_id": binding.memory_thread_id,
+            "analyst_selected_tool": (
+                cl.user_session.get("analyst_selected_tool", "auto")
+                if binding.agent_id == "analyst" else "auto"
+            ),
         },
     )
 
@@ -212,6 +341,7 @@ async def on_message(message: cl.Message) -> None:
     response = await application.runtime.run(
         binding=binding,
         text=request_text,
+        selected_tool=_selected_tool_for_binding(binding),
     )
 
     artifacts_after = await application.artifacts.list_artifacts(binding.chat_id)
