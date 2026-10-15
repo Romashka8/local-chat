@@ -46,7 +46,7 @@ class AgentRegistry:
     def __init__(self, *, checkpointer_provider: CheckpointerProvider) -> None:
         self._checkpointer_provider = checkpointer_provider
         self._definitions: dict[str, AgentDefinition] = {}
-        self._graphs: dict[str, Any] = {}
+        self._graphs: dict[tuple[str, str | None], Any] = {}
         self._default_id: str | None = None
         self._build_lock = asyncio.Lock()
 
@@ -92,37 +92,63 @@ class AgentRegistry:
             raise KeyError(f"Unknown agent: {agent_id}")
         return definition.profile
 
-    async def get(self, agent_id: str) -> Any:
-        graph = self._graphs.get(agent_id)
+    def available_tools(self, agent_id: str) -> tuple[str, ...]:
+        """Return the actual registered tool names (server-side allowlist)."""
+        definition = self._definitions.get(agent_id)
+        if definition is None:
+            raise KeyError(f"Unknown agent: {agent_id}")
+        if definition.tools_factory is None:
+            return ()
+        return tuple(tool.name for tool in definition.tools_factory())
+
+    async def get(self, agent_id: str, *, selected_tool: str | None = None) -> Any:
+        """Reuse a graph per (agent, tool mode), sharing the same checkpointer."""
+        cache_key = (agent_id, selected_tool)
+        graph = self._graphs.get(cache_key)
         if graph is not None:
             return graph
 
         async with self._build_lock:
-            graph = self._graphs.get(agent_id)
+            graph = self._graphs.get(cache_key)
             if graph is not None:
                 return graph
 
             definition = self._definitions.get(agent_id)
             if definition is None:
                 raise KeyError(f"Unknown agent: {agent_id}")
+            if selected_tool is not None and agent_id != "analyst":
+                raise ValueError("Manual tool selection is available only for Analyst")
 
-            checkpointer = await self._checkpointer_provider()
-            model = definition.model_factory()
             tools = (
                 tuple(definition.tools_factory())
                 if definition.tools_factory is not None
                 else ()
             )
+            prompt = definition.system_prompt
+            if selected_tool is not None:
+                filtered = tuple(t for t in tools if t.name == selected_tool)
+                if len(filtered) != 1:
+                    raise ValueError(f"Unknown or ambiguous tool: {selected_tool}")
+                tools = filtered
+                prompt = (
+                    f"{prompt}\n\n"
+                    "The user selected an explicit tool through the UI for this turn: "
+                    f"{selected_tool}. Only that tool is available. "
+                    "If the user supplied the required arguments, use it before answering. "
+                    "If an argument is missing, ask for it; never fabricate tool results. "
+                    "You must not claim that other unavailable tools were used."
+                )
 
+            checkpointer = await self._checkpointer_provider()
+            model = definition.model_factory()
             graph = definition.build(
                 agent_id=definition.id,
                 model=model,
                 checkpointer=checkpointer,
-                system_prompt=definition.system_prompt,
-                tools=tools,
+                system_prompt=prompt,
+                tools=tools
             )
-
-            self._graphs[agent_id] = graph
+            self._graphs[cache_key] = graph
             return graph
 
     def clear(self) -> None:
