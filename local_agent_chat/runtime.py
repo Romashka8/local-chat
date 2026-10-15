@@ -36,17 +36,23 @@ class AgentRuntime:
             raise RuntimeError(f"Another Turn is already running for this Chat")
         return lock
 
-    async def run(self, binding: ChatBinding, text: str) -> str:
+    async def run(
+        self,
+        binding: ChatBinding,
+        text: str,
+        *,
+        selected_tool: str | None = None,
+    ) -> str:
         async with self._enter_thread(binding.memory_thread_id):
-            graph = await self._registry.get(binding.agent_id)
+            graph = await self._registry.get(binding.agent_id, selected_tool=selected_tool)
             result = await graph.ainvoke(
                 {"messages": [HumanMessage(content=text)]},
                 config={"configurable": {"thread_id": binding.memory_thread_id}},
                 context=AgentContext(
                     user_id=binding.user_id,
                     chat_id=binding.chat_id,
-                    agent_id=binding.agent_id,
-                ),
+                    agent_id=binding.agent_id
+                )
             )
 
             response = _message_text(result["messages"][-1])
