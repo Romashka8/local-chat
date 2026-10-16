@@ -46,7 +46,7 @@ class AgentRegistry:
     def __init__(self, *, checkpointer_provider: CheckpointerProvider) -> None:
         self._checkpointer_provider = checkpointer_provider
         self._definitions: dict[str, AgentDefinition] = {}
-        self._graphs: dict[tuple[str, str | None], Any] = {}
+        self._graphs: dict[tuple[str, str | None, float | None], Any] = {}
         self._default_id: str | None = None
         self._build_lock = asyncio.Lock()
 
@@ -101,9 +101,13 @@ class AgentRegistry:
             return ()
         return tuple(tool.name for tool in definition.tools_factory())
 
-    async def get(self, agent_id: str, *, selected_tool: str | None = None) -> Any:
+    async def get(self, agent_id: str, *, selected_tool: str | None = None, temperature: float | None = None) -> Any:
         """Reuse a graph per (agent, tool mode), sharing the same checkpointer."""
-        cache_key = (agent_id, selected_tool)
+        if temperature is not None:
+            if agent_id != "analyst" or not 0 <= temperature <= 1:
+                raise ValueError("Analyst temperature must be in [0, 1]")
+            temperature = round(float(temperature), 1)
+        cache_key = (agent_id, selected_tool, temperature)
         graph = self._graphs.get(cache_key)
         if graph is not None:
             return graph
@@ -141,12 +145,15 @@ class AgentRegistry:
 
             checkpointer = await self._checkpointer_provider()
             model = definition.model_factory()
+            if temperature is not None:
+                # A per-graph model copy avoids cross-chat race conditions.
+                model = model.model_copy(update={"temperature": temperature})
             graph = definition.build(
                 agent_id=definition.id,
                 model=model,
                 checkpointer=checkpointer,
                 system_prompt=prompt,
-                tools=tools
+                tools=tools,
             )
             self._graphs[cache_key] = graph
             return graph
