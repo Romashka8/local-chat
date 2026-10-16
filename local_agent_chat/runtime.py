@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from collections.abc import Awaitable, Callable
 from typing import Any
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 
 from .agent_context import AgentContext
 from .agent_registry import AgentRegistry
@@ -42,18 +43,43 @@ class AgentRuntime:
         text: str,
         *,
         selected_tool: str | None = None,
+        temperature: float | None = None,
+        on_tool_result: Callable[[str, str], Awaitable[None]] | None = None,
     ) -> str:
         async with self._enter_thread(binding.memory_thread_id):
-            graph = await self._registry.get(binding.agent_id, selected_tool=selected_tool)
-            result = await graph.ainvoke(
-                {"messages": [HumanMessage(content=text)]},
-                config={"configurable": {"thread_id": binding.memory_thread_id}},
-                context=AgentContext(
-                    user_id=binding.user_id,
-                    chat_id=binding.chat_id,
-                    agent_id=binding.agent_id
-                )
+            graph = await self._registry.get(
+                binding.agent_id, selected_tool=selected_tool, temperature=temperature,
             )
+            input_state = {"messages": [HumanMessage(content=text)]}
+            config = {"configurable": {"thread_id": binding.memory_thread_id}}
+            context = AgentContext(
+                user_id=binding.user_id,
+                chat_id=binding.chat_id,
+                agent_id=binding.agent_id,
+            )
+            if on_tool_result is None:
+                result = await graph.ainvoke(input_state, config=config, context=context)
+            else:
+                result = None
+                seen_tool_ids: set[str] = set()
+                async for state in graph.astream(
+                    input_state, config=config, context=context, stream_mode="values"
+                ):
+                    result = state
+                    messages = state.get("messages", [])
+                    # Only display tool messages produced after this input turn.
+                    last_human = max(
+                        (i for i, m in enumerate(messages) if isinstance(m, HumanMessage)),
+                        default=-1,
+                    )
+                    for msg in messages[last_human + 1:]:
+                        if isinstance(msg, ToolMessage):
+                            msg_id = str(msg.id or msg.tool_call_id)
+                            if msg_id not in seen_tool_ids:
+                                seen_tool_ids.add(msg_id)
+                                await on_tool_result(msg.name or "tool", _message_text(msg))
+                if result is None:
+                    raise RuntimeError("Agent stream produced no state")
 
             response = _message_text(result["messages"][-1])
 
