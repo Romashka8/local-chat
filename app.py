@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
+from chainlit.input_widget import Select, Slider, Switch
+
 import chainlit as cl
 from chainlit.server import app, router
 from chainlit.types import ThreadDict
@@ -119,9 +121,10 @@ def _selected_tool_for_binding(binding: ChatBinding) -> str | None:
     """Read the validated mode for this request. None = normal automatic tools."""
     if binding.agent_id != "analyst":
         return None
-    selected = cl.user_session.get("analyst_selected_tool", "auto")
-    if selected == "auto" or selected is None:
+    settings = _get_analyst_settings()
+    if settings["auto"]:
         return None
+    selected = settings["tool"]
     if selected not in application.registry.available_tools("analyst"):
         return None
     return str(selected)
@@ -171,6 +174,154 @@ def _require_analyst_chat() -> ChatBinding | None:
     return binding if binding.agent_id == "analyst" else None
 
 
+# Analyst-specific settings live in the UI session and are persisted as thread
+# metadata. They never modify General or mutate a shared graph's settings.
+DEFAULT_ANALYST_SETTINGS = {
+    "tool": "inspect_dataset",
+    "auto": True,
+    "steps": True,
+    "temperature": 0.2,
+}
+
+
+def _clean_analyst_settings(data: dict | None) -> dict:
+    data = data if isinstance(data, dict) else {}
+    available = set(application.registry.available_tools("analyst"))
+    tool = data.get("tool", DEFAULT_ANALYST_SETTINGS["tool"])
+    if tool not in available:
+        tool = next(iter(application.registry.available_tools("analyst")), "")
+    raw_temp = data.get("temperature", 0.2)
+    try:
+        temperature = round(float(raw_temp), 1)
+    except (TypeError, ValueError, OverflowError):
+        temperature = 0.2
+    if not 0 <= temperature <= 1:
+        temperature = 0.2
+    return {
+        "tool": tool,
+        "auto": data.get("auto", True) if isinstance(data.get("auto", True), bool) else True,
+        "steps": data.get("steps", True) if isinstance(data.get("steps", True), bool) else True,
+        "temperature": temperature,
+    }
+
+
+def _get_analyst_settings() -> dict:
+    return _clean_analyst_settings(cl.user_session.get("analyst_settings"))
+
+
+async def _send_analyst_settings() -> None:
+    data = _get_analyst_settings()
+    names = application.registry.available_tools("analyst")
+    await cl.ChatSettings([
+        Select(
+            id="analyst_tool",
+            label="Analyst — Инструмент",
+            values=list(names),
+            initial_value=data["tool"],
+        ),
+        Switch(id="analyst_auto", label="Автоматический выбор tools", initial=data["auto"]),
+        Switch(id="analyst_steps", label="Показывать вызовы инструментов", initial=data["steps"]),
+        Slider(
+            id="analyst_temperature", label="Temperature",
+            min=0, max=1, step=0.1, initial=data["temperature"],
+        ),
+    ]).send()
+
+
+def _new_analyst_panel() -> cl.CustomElement:
+    # JSX is loaded by Chainlit from public/elements/AnalystPanel.jsx.
+    # The server owns the canonical settings; the browser sends only candidate values.
+    return cl.CustomElement(
+        name="AnalystPanel",
+        display="inline",
+        props={
+            "settings": _get_analyst_settings(),
+            "tools": [
+                {"value": name, "label": TOOL_LABELS.get(name, name)}
+                for name in application.registry.available_tools("analyst")
+            ],
+        },
+    )
+
+
+async def _send_analyst_panel() -> None:
+    panel = _new_analyst_panel()
+    await cl.Message(
+        content="**Панель Analyst** — выбери инструмент и параметры, затем нажми «Применить».",
+        elements=[panel],
+        actions=_analyst_tool_action(),
+    ).send()
+    cl.user_session.set("analyst_panel", panel)
+
+
+async def _refresh_analyst_panel() -> None:
+    panel = cl.user_session.get("analyst_panel")
+    if panel is not None:
+        panel.props["settings"] = _get_analyst_settings()
+        await panel.update()
+
+
+@cl.action_callback("analyst_save_panel")
+async def analyst_save_panel(action: cl.Action) -> None:
+    binding = _require_analyst_chat()
+    if binding is None:
+        return
+    if not isinstance(action.payload, dict):
+        return
+    requested = action.payload
+    # Do not accept arbitrary model/tool IDs or settings from the browser.
+    if requested.get("tool") not in application.registry.available_tools("analyst"):
+        await cl.Message(content="Неизвестный инструмент Analyst.").send()
+        return
+    if not isinstance(requested.get("auto"), bool) or not isinstance(requested.get("steps"), bool):
+        await cl.Message(content="Некорректные параметры Analyst.").send()
+        return
+    data = _clean_analyst_settings(requested)
+    cl.user_session.set("analyst_settings", data)
+    await _persist_analyst_settings(binding)
+    await _refresh_analyst_panel()
+    await _send_analyst_settings()
+    await cl.Message(
+        content=(
+            "Настройки Analyst применены: "
+            f"режим **{'Auto' if data['auto'] else _analyst_tool_label(data['tool'])}**, "
+            f"шаги **{'включены' if data['steps'] else 'скрыты'}**, "
+            f"temperature **{data['temperature']:.1f}**."
+        ),
+    ).send()
+
+
+async def _persist_analyst_settings(binding: ChatBinding) -> None:
+    await chainlit_layer.update_thread(
+        binding.chat_id,
+        metadata={
+            "agent_id": binding.agent_id,
+            "memory_thread_id": binding.memory_thread_id,
+            "analyst_settings": _get_analyst_settings(),
+            "analyst_selected_tool": (
+                "auto" if _get_analyst_settings()["auto"]
+                else _get_analyst_settings()["tool"]
+            ),
+        },
+    )
+
+
+@cl.on_settings_update
+async def on_settings_update(values: dict) -> None:
+    binding = _current_binding()
+    if binding.agent_id != "analyst":
+        return
+    data = _clean_analyst_settings({
+        "tool": values.get("analyst_tool"),
+        "auto": values.get("analyst_auto"),
+        "steps": values.get("analyst_steps"),
+        "temperature": values.get("analyst_temperature"),
+    })
+    cl.user_session.set("analyst_settings", data)
+    await _persist_analyst_settings(binding)
+    await _refresh_analyst_panel()
+
+
 def _message_with_uploaded_files(text: str, filenames: tuple[str, ...]) -> str:
     if not filenames:
         return text
@@ -212,12 +363,14 @@ async def on_chat_start() -> None:
     )
     _store_binding(binding)
     cl.user_session.set("analyst_selected_tool", "auto")
+    if binding.agent_id == "analyst":
+        cl.user_session.set("analyst_settings", dict(DEFAULT_ANALYST_SETTINGS))
+        await _send_analyst_settings()
 
     profile = application.registry.profile(binding.agent_id)
-    await cl.Message(
-        content=f"Чат запущен. Агент: **{profile.label}**.",
-        actions=_analyst_tool_action() if binding.agent_id == "analyst" else [],
-    ).send()
+    await cl.Message(content=f"Чат запущен. Агент: **{profile.label}**.").send()
+    if binding.agent_id == "analyst":
+        await _send_analyst_panel()
 
 
 @cl.on_chat_resume
@@ -246,9 +399,34 @@ async def on_chat_resume(thread: ThreadDict) -> None:
     )
     _store_binding(binding)
     if binding.agent_id == "analyst":
-        cl.user_session.set(
-            "analyst_selected_tool", _analyst_selected_from_metadata(metadata)
-        )
+        legacy = _analyst_selected_from_metadata(metadata)
+        defaults = dict(DEFAULT_ANALYST_SETTINGS)
+        if legacy != "auto":
+            defaults.update(tool=legacy, auto=False)
+        defaults.update(metadata.get("analyst_settings") or {})
+        cl.user_session.set("analyst_settings", _clean_analyst_settings(defaults))
+        await _send_analyst_settings()
+        # Reuse a persisted panel if Chainlit supplied its metadata on resume.
+        # Avoid adding a duplicate card each time the thread is reopened.
+        restored = False
+        for item in reversed(thread.get("elements") or []):
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") != "custom" or item.get("name") != "AnalystPanel":
+                continue
+            if not item.get("id") or not item.get("forId"):
+                continue
+            panel = cl.CustomElement(
+                name="AnalystPanel", display="inline", id=str(item["id"]),
+                for_id=str(item["forId"]),
+                props=_new_analyst_panel().props,
+            )
+            cl.user_session.set("analyst_panel", panel)
+            await panel.update()
+            restored = True
+            break
+        if not restored:
+            await _send_analyst_panel()
     else:
         cl.user_session.set("analyst_selected_tool", "auto")
 
@@ -282,15 +460,15 @@ async def analyst_select_tool(action: cl.Action) -> None:
         await cl.Message(content="Недоступный инструмент Analyst.").send()
         return
 
-    cl.user_session.set("analyst_selected_tool", selection)
-    await chainlit_layer.update_thread(
-        binding.chat_id,
-        metadata={
-            "agent_id": binding.agent_id,
-            "memory_thread_id": binding.memory_thread_id,
-            "analyst_selected_tool": selection,
-        },
-    )
+    data = _get_analyst_settings()
+    if selection == "auto":
+        data["auto"] = True
+    else:
+        data.update(tool=selection, auto=False)
+    cl.user_session.set("analyst_settings", data)
+    await _persist_analyst_settings(binding)
+    await _send_analyst_settings()
+    await _refresh_analyst_panel()
     await cl.Message(
         content=(
             f"Режим Analyst: **{_analyst_tool_label(selection)}**. "
@@ -314,9 +492,9 @@ async def on_message(message: cl.Message) -> None:
             "agent_id": binding.agent_id,
             "memory_thread_id": binding.memory_thread_id,
             "analyst_selected_tool": (
-                cl.user_session.get("analyst_selected_tool", "auto")
-                if binding.agent_id == "analyst" else "auto"
-            ),
+                "auto" if _get_analyst_settings()["auto"] else _get_analyst_settings()["tool"]
+            ) if binding.agent_id == "analyst" else "auto",
+            "analyst_settings": _get_analyst_settings() if binding.agent_id == "analyst" else {},
         },
     )
 
@@ -338,10 +516,19 @@ async def on_message(message: cl.Message) -> None:
         for item in await application.artifacts.list_artifacts(binding.chat_id)
     }
 
+    async def show_tool_step(name: str, output: str) -> None:
+        step = cl.Step(name=f"Tool: {name}", type="tool")
+        step.output = output[:2000] + ("…" if len(output) > 2000 else "")
+        await step.send()
+
+    analyst = binding.agent_id == "analyst"
+    settings = _get_analyst_settings() if analyst else {}
     response = await application.runtime.run(
         binding=binding,
         text=request_text,
         selected_tool=_selected_tool_for_binding(binding),
+        temperature=settings.get("temperature") if analyst else None,
+        on_tool_result=show_tool_step if analyst and settings["steps"] else None,
     )
 
     artifacts_after = await application.artifacts.list_artifacts(binding.chat_id)
