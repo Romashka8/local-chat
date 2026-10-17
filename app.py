@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import hashlib
+import hmac
+import secrets
+from urllib.parse import quote
 
 from chainlit.input_widget import Select, Slider, Switch
 
@@ -23,6 +27,24 @@ chainlit_layer = create_chainlit_data_layer(
     application.settings.chainlit_db,
     storage,
 )
+
+
+# Signed, process-lifetime links for in-chat HTML previews. Never expose a
+# directory or raw filesystem path supplied by the browser.
+_PREVIEW_KEY = secrets.token_bytes(32)
+
+
+def _preview_signature(chat_id: str, name: str) -> str:
+    message = f"{chat_id}\0{name}".encode("utf-8")
+    return hmac.new(_PREVIEW_KEY, message, hashlib.sha256).hexdigest()
+
+
+def _preview_url(chat_id: str, name: str) -> str:
+    signature = _preview_signature(chat_id, name)
+    return (
+        f"/report-preview/{quote(chat_id, safe='')}/"
+        f"{quote(name, safe='')}?signature={signature}"
+    )
 
 
 @cl.data_layer
@@ -479,6 +501,40 @@ async def analyst_select_tool(action: cl.Action) -> None:
     ).send()
 
 
+@cl.action_callback("analyst_preview_html_report")
+async def analyst_preview_html_report(action: cl.Action) -> None:
+    """Open only an existing HTML artifact from the current Analyst chat."""
+    binding = _require_analyst_chat()
+    if binding is None:
+        return
+    payload = action.payload if isinstance(action.payload, dict) else {}
+    name = payload.get("filename")
+    if not isinstance(name, str) or not name.lower().endswith(".html"):
+        await cl.Message(content="Некорректное имя HTML-отчёта.").send()
+        return
+
+    artifacts = await application.artifacts.list_artifacts(binding.chat_id)
+    artifact = next(
+        (item for item in artifacts if item.name == name and item.path.suffix.lower() == ".html"),
+        None,
+    )
+    if artifact is None:
+        await cl.Message(content="Этот HTML-отчёт больше не доступен в текущем чате.").send()
+        return
+
+    viewer = cl.CustomElement(
+        name="HtmlReport",
+        display="inline",
+        props={
+            "mode": "viewer",
+            "filename": artifact.name,
+            "url": _preview_url(binding.chat_id, artifact.name),
+        },
+    )
+    await cl.ElementSidebar.set_elements([viewer])
+    await cl.ElementSidebar.set_title(artifact.name)
+
+
 @cl.on_message
 async def on_message(message: cl.Message) -> None:
     binding = _current_binding()
@@ -535,7 +591,19 @@ async def on_message(message: cl.Message) -> None:
     new_artifacts = [
         item for item in artifacts_after if item.name not in artifacts_before
     ]
-    elements = [cl.File(name=item.name, path=str(item.path)) for item in new_artifacts]
+    # Preserve the original downloadable artifact. HTML reports produced by
+    # Analyst also get a persistent preview control inside the chat message.
+    elements = []
+    for item in new_artifacts:
+        elements.append(cl.File(name=item.name, path=str(item.path)))
+        if binding.agent_id == "analyst" and item.path.suffix.lower() == ".html":
+            elements.append(
+                cl.CustomElement(
+                    name="HtmlReport",
+                    display="inline",
+                    props={"mode": "launcher", "filename": item.name},
+                )
+            )
 
     await cl.Message(
         content=response,
@@ -571,6 +639,55 @@ async def local_file(object_key: str):
 # route ahead of that catch-all so persisted element URLs return file bytes.
 _local_file_route = router.routes.pop()
 router.routes.insert(0, _local_file_route)
+
+
+@router.get("/report-preview/{chat_id}/{report_name}", include_in_schema=False)
+async def report_preview(chat_id: str, report_name: str, signature: str = ""):
+    """Render an existing chat HTML artifact, never an arbitrary local file.
+
+    The short-lived-in-process HMAC URL is not a substitute for production
+    authorization: this v1 app intentionally serves one local user only.
+    """
+    if (
+        not isinstance(signature, str)
+        or len(signature) != 64
+        or not hmac.compare_digest(signature, _preview_signature(chat_id, report_name))
+        or not report_name.lower().endswith(".html")
+    ):
+        raise HTTPException(status_code=404)
+
+    try:
+        artifacts = await application.artifacts.list_artifacts(chat_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404) from error
+
+    artifact = next(
+        (item for item in artifacts if item.name == report_name and item.path.suffix.lower() == ".html"),
+        None,
+    )
+    if artifact is None:
+        raise HTTPException(status_code=404)
+
+    return FileResponse(
+        artifact.path,
+        media_type="text/html; charset=utf-8",
+        content_disposition_type="inline",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+            # Generated reports need inline styles and base64 graph images, but
+            # must not execute any scripts or fetch external resources.
+            "Content-Security-Policy": (
+                "sandbox; default-src 'none'; style-src 'unsafe-inline'; "
+                "img-src data:; frame-ancestors 'self'"
+            ),
+        },
+    )
+
+
+# As with /files above, register ahead of Chainlit's SPA catch-all route.
+_report_preview_route = router.routes.pop()
+router.routes.insert(0, _report_preview_route)
 
 
 async def close_resources() -> None:
